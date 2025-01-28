@@ -156,7 +156,7 @@ end
 
 -- Draw Functions
 
-function Module.draw.BackgroundImage(img, sizeX, sizeY, rotation, color)
+function Module.draw.BackgroundImage(img, sizeX, sizeY, rotation, color) -- don't use rotation
     local WIDTH, HEIGHT = love.graphics.getDimensions()
     local numX = WIDTH / sizeX + 2
     local numY = HEIGHT / sizeY + 2
