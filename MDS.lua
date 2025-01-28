@@ -344,7 +344,7 @@ function Module.updateLerp(values, dt)
     return values
 end
 
-function Module.ray.castRay(NowX, NowY, angle, Circles, Rectangles, Lines, StepSize, MaxSteps)
+function Module.ray.castRay(NowX, NowY, angle, Circles, Rectangles, Lines, StepSize, MaxSteps) -- trash, don't use
     Circles = Circles or {}
     Rectangles = Rectangles or {}
     Lines = Lines or {}
