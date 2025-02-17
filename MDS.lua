@@ -1,4 +1,3 @@
- 
 -- M.D.S. (Mega Draw System)
 
 local Module = {}
@@ -22,7 +21,7 @@ Module.camera.position = {
     offsetY = 0,
     targetX = 0,
     targetY = 0,
-    moveSpeed = 0.9
+    moveSpeed = 0.1
 }
 
 Module.camera.rotation = {
@@ -36,15 +35,20 @@ Module.camera.zoom = {
     currentZoom = love.graphics.getWidth(),
     targetZoom = love.graphics.getWidth(),
     offsetZoom = 0,
-    zoomSpeed = 0.5
+    zoomSpeed = 0.5,
 }
+
+Module.camera.shake = {
+    list = {}
+}
+
 
 local BackgroundCache = {}
 
 Module.file = {}
 
 local isCameraAttached = false
-local deltaTime = 1
+local dt = 1
 
 -- Camera Functions
 
@@ -107,8 +111,71 @@ function Module.camera.setZoom(amount)
     Module.camera.zoom.targetZoom = amount
 end
 
-function Module.camera.update()
+function Module.cameraShake(duration, force, speed, steps, dimi)
+    steps = steps or 1
+    dimi = dimi or false
+
+    local shake = {
+        duration = duration,
+        originalDuration = duration,
+        force = force,
+        speed = speed,
+        step = steps,
+        dimi = dimi,
+        localX = 0,
+        localY = 0,
+        localXNow = 0,
+        localYNow = 0,
+        dead = false
+    }
+
+    table.insert(Module.camera.shake.list, shake)
+end
+
+function Module.camera.update()    
     local cam = Module.camera
+
+    for i, shake in ipairs(cam.shake.list) do
+        if not shake.dead then
+            local shake = cam.shake.list[i]
+            shake.localX = math.random(-shake.force, shake.force)
+            shake.localY = math.random(-shake.force, shake.force)
+            
+            if shake.dimi then
+                shake.force = shake.force * (shake.duration / shake.originalDuration)
+            end
+
+            shake.localXNow = Module.lerp(shake.localXNow, shake.localX, shake.speed)
+            shake.localYNow = Module.lerp(shake.localYNow, shake.localY, shake.speed)
+            
+            -- Em vez de acumular em cima do valor anterior, soma os shakes atuais
+            cam.position.offsetX = Module.lerp(cam.position.offsetX, shake.localXNow, 0.5)
+            cam.position.offsetY = Module.lerp(cam.position.offsetY, shake.localYNow, 0.5)
+            
+            if shake.duration <= 0 then
+                shake.dead = true
+            end
+
+            if shake.step <= 0 then
+                shake.duration = shake.duration - 1
+            end
+
+            shake.step = shake.step - 1
+        end
+    end
+
+    for i=1, #cam.shake.list do
+        if cam.shake.list[i] then
+            local shake = cam.shake.list[i]
+            if shake.dead then
+                table.remove(cam.shake.list, i)
+                i = i - 1
+            end
+        end
+    end
+
+    cam.position.offsetX = Module.lerp(cam.position.offsetX, 0, 0.5)
+    cam.position.offsetY = Module.lerp(cam.position.offsetY, 0, 0.5)
     cam.position.currentX = Module.lerp(cam.position.currentX, cam.position.targetX, cam.position.moveSpeed) + cam.position.offsetX
     cam.position.currentY = Module.lerp(cam.position.currentY, cam.position.targetY, cam.position.moveSpeed) + cam.position.offsetY
     cam.zoom.currentZoom = Module.lerp(cam.zoom.currentZoom, cam.zoom.targetZoom, cam.zoom.zoomSpeed) + cam.zoom.offsetZoom
@@ -119,13 +186,16 @@ function Module.camera.link()
     if not isCameraAttached then
         love.graphics.push()
         isCameraAttached = true
+        -- Posiciona a câmera no ponto correto
         local x = Module.camera.position.currentX
         local y = Module.camera.position.currentY
         local zoom = 1 / (Module.pixelToNormal(Module.camera.zoom.currentZoom, love.graphics.getWidth()) + 0.0001)
         local angle = math.rad(Module.camera.rotation.currentAngle)
 
+        -- Move o ponto de origem para o centro da tela
         love.graphics.translate(love.graphics.getWidth() / 2, love.graphics.getHeight() / 2)
 
+        -- Aplica rotação, escala e move a câmera para a posição desejada
         love.graphics.rotate(angle)
         love.graphics.scale(zoom)
         love.graphics.translate(-x, -y)
@@ -156,7 +226,7 @@ end
 
 -- Draw Functions
 
-function Module.draw.BackgroundImage(img, sizeX, sizeY, rotation, color) -- don't use rotation
+function Module.draw.BackgroundImage(img, sizeX, sizeY, rotation, color)
     local WIDTH, HEIGHT = love.graphics.getDimensions()
     local numX = WIDTH / sizeX + 2
     local numY = HEIGHT / sizeY + 2
@@ -170,21 +240,22 @@ function Module.draw.BackgroundImage(img, sizeX, sizeY, rotation, color) -- don'
     love.graphics.pop()
 end
 
-function Module.draw.rectangle(x, y, width, height, color, rotation, mode, borderRadius, options)
+function Module.draw.rectangle(x, y, width, height, color, rotation, mode, borderRadius, borderColor, hasBorder)
     mode = mode or "fill"
-    rotation = rotation or 0
+    drawBorder = ((borderRadius and true) or (borderColor and true)) and hasBorder
+    borderColor = borderColor or {0, 0, 0, 255}
     borderRadius = borderRadius or 0
-    options = options or {}
-    local drawBorder = options.border or false
-    local borderColor = options.borderColor or {0, 0, 0, 255}
 
 
     Module.color.set(color)
     love.graphics.push()
     love.graphics.translate(x,y)
-    love.graphics.rotate(math.rad(rotation))
-    love.graphics.rectangle(mode, 0, 0, width, height, borderRadius)
+    if rotation then
+        love.graphics.rotate(math.rad(rotation))
+    end
 
+    love.graphics.rectangle(mode, 0, 0, width, height, borderRadius)
+    
     if drawBorder then
         Module.color.set(borderColor)
         love.graphics.rectangle("line", 0, 0, width, height, borderRadius)
@@ -226,11 +297,16 @@ function Module.draw.triangle(x, y, size, color, rotation, mode)
 end
 
 
-function Module.draw.text(x, y, text, color, scale, rotation)
+function Module.draw.text(x, y, text, color, size, rotation)
+    --ds.log(size)
+    local font = love.graphics.getFont()
+    local s = ((font:getWidth(tostring(text)) / #tostring(text)) + font:getHeight(tostring(text))) / 2 + 10
+    size = size or s
+    scaleX = size / s
     rotation = math.rad(rotation or 0)
     Module.color.set(color)
     text = tostring(text)
-    love.graphics.print(text, x, y, rotation, scale)
+    love.graphics.print(text, x, y, rotation, scaleX)
 end
 
 function Module.draw.loadImage(path)
@@ -238,18 +314,24 @@ function Module.draw.loadImage(path)
 end
 
 function Module.draw.image(x, y, sizeX, sizeY, image, rotation, color)
+    
     rotation = rotation or 0
+    local centerX, centerY = x + sizeX / 2, y + sizeY / 2
+    
     Module.color.set(color)
     love.graphics.push()
-    love.graphics.translate(x - sizeX / 2, y - sizeY / 2)
+    love.graphics.translate(centerX, centerY)
+    love.graphics.rotate(math.rad(rotation))
     
     local imageSizeX, imageSizeY = image:getWidth(), image:getHeight()
 
     love.graphics.scale(Module.pixelToNormal(sizeX, imageSizeX), Module.pixelToNormal(sizeY, imageSizeY))
-    love.graphics.rotate(math.rad(rotation))
-    love.graphics.draw(image, 0, 0)
+    
+    love.graphics.draw(image, -imageSizeX / 2, -imageSizeY / 2)
+    
     love.graphics.pop()
 end
+
 
 function Module.draw.polygon(x, y, vertices, color, angle, mode)
     mode = mode or 'line'
@@ -263,7 +345,6 @@ function Module.draw.polygon(x, y, vertices, color, angle, mode)
     love.graphics.pop()
 end
 
-
 -- Math Functions
 
 function Module.CheckItemInTable(tbl, item)
@@ -276,7 +357,7 @@ function Module.CheckItemInTable(tbl, item)
 end
 
 function Module.setDeltaTime(dtValue)
-    deltaTime = dtValue
+    dt = dtValue
 end
 
 function Module.clamp(value, min, max)
@@ -327,13 +408,20 @@ function Module.isCircleColliding(cx1, cy1, r1, cx2, cy2, r2)
 end
 
 function Module.isBoxColliding(box1, box2)
-    local x1, y1, w1, h1 = unpack(box1)
-    local x2, y2, w2, h2 = unpack(box2)
+    local x1, y1, w1, h1 = box1[1], box1[2], box1[3], box1[4]
+    local x2, y2, w2, h2 = box2[1], box2[2], box2[3], box2[4]
     return x1 < x2 + w2 and x1 + w1 > x2 and y1 < y2 + h2 and y1 + h1 > y2
 end
 
-function Module.lerp(current, target, speed)
-    return current + ((target - current) * speed)
+function Module.lerp(current, target, speed, vel)
+    vel = vel or 0
+    vel = vel + (((target) - current) * speed)
+    return current + vel, vel
+end
+
+function Module.elastic(a, b, t, p)
+    p = p or 0.3 
+    return a + (b - a) * (-math.pow(2, -10 * t) * math.sin((t - p / 4) * (2 * math.pi) / p) + 1)
 end
 
 function Module.updateLerp(values, dt)
@@ -344,7 +432,14 @@ function Module.updateLerp(values, dt)
     return values
 end
 
-function Module.ray.castRay(NowX, NowY, angle, Circles, Rectangles, Lines, StepSize, MaxSteps) -- trash, don't use
+function Module.getDist(x1, y1, x2, y2)
+    local difX = x1 - x2
+    local difY = y1 - y2
+    local dist = math.sqrt(difX * difX + difY * difY)
+    return dist
+end
+
+function Module.ray.castRay(NowX, NowY, angle, Circles, Rectangles, Lines, StepSize, MaxSteps)
     Circles = Circles or {}
     Rectangles = Rectangles or {}
     Lines = Lines or {}
@@ -358,7 +453,7 @@ function Module.ray.castRay(NowX, NowY, angle, Circles, Rectangles, Lines, StepS
             local objX = obj.x + (obj.r / 2) + (WIDTH / 2)
             local objY = obj.y + (obj.r / 2) + (HEIGHT / 2)
             local objR = obj.r
-            if ds.math.isCircleColliding(objX, objY, objR, posX, posY, 1) then
+            if ds.math.isCircleColliding(objX, objY, objR, posX, posY, 16) then
                 return true
             end
         end
@@ -425,7 +520,7 @@ function Module.math.Gaussian(x)
 end
 
 -- Função Sigmoide: 1 / (1 + e^(-x))
-function Module.math.Sigmoid(x)
+function Module.math.Sigmoid(x) 
     return 1 / (1 + math.exp(-x))
 end
 
@@ -436,7 +531,7 @@ end
 
 -- Console Functions
 
-function Module.console.clear(maxEntries, showTime)
+function Module.console.clear(maxEntries ,showTime)
     maxEntries = maxEntries or 20
     showTime = showTime or false
     Module.console.maxEntries = maxEntries
@@ -448,23 +543,30 @@ function Module.console.setTextColor(color)
     Module.console.defaultTextColor = color
 end
 
-function Module.log(message, color)
-    color = color or Module.console.defaultTextColor
+function Module.log(...)
+    local message = {...}
+    local t = ""
+    for i, text in ipairs(message) do
+        if i > 1 then
+            t = t .. "  " .. tostring(text)
+        else
+            t = tostring(text)
+        end
+    end
+    color = Module.console.defaultTextColor
     if #Module.console.logEntries > Module.console.maxEntries then
         table.remove(Module.console.logEntries, 1)
     end
-    table.insert(Module.console.logEntries, {tostring(message), color})
+    table.insert(Module.console.logEntries, {tostring(t), color})
 end
 
-function Module.console.render(x, y)
-    y = y - 16
+function Module.console.render(x, y, size)
+    y = y - size
     local offset = 12 * (#Module.console.logEntries - 1)
     for i, entry in ipairs(Module.console.logEntries) do
-        Module.draw.text(x, y - offset + (i - 1) * 12, entry[1], entry[2], 1)
+        Module.draw.text(x, y - offset + (i - 1) * 12, entry[1], entry[2], size)
     end
 end
-
--- File functions & Debug/Test functions
 
 function Module.file.read(filePath)
     local file = io.open(filePath, 'r')
